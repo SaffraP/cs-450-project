@@ -1,0 +1,235 @@
+---
+title: "initial exploration"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Initial exploration of the disaster tweets dataset
+
+### Load packages:
+```{r}
+library(tidyverse)
+```
+
+
+
+### Read in the data: 
+```{r}
+train <- read_csv("nlp-getting-started/train.csv")
+```
+
+### Take a quick look at the structure of the data
+```{r}
+head(train)
+```
+
+
+### Look at the ratio of the target class 
+```{r}
+train %>%
+  count(target) %>%
+  mutate(paste(percentage = round(n / sum(n) * 100), '%'))
+
+```
+Looks like the classes are, for the most part pretty even. **possitive class makes up 43% of cases**
+
+
+
+## Diving into exploring the tweets themselves. 
+### How many tweets have these extra features: keyword and location
+```{r}
+table(keyword = is.na(train$keyword), location = is.na(train$location))
+```
+**Only 61 tweets in the dataset have both a keyword AND a location tag, looks like these will not be too helpful.** all tweets that have keywords also have locations, something interesting to note. 
+
+### Are the different targets more likely to have keywords or locations?
+```{r}
+table(location = is.na(train$location), target = train$target)
+```
+Doesn't look like it.
+
+### What does the distribution of character length look like
+```{r}
+train %>%
+  mutate(char_count = nchar(text)) %>%
+  ggplot(aes(x = char_count)) + 
+  geom_histogram(aes(fill = factor(target))) + 
+  geom_vline(xintercept = 132, linetype = "dashed", alpha = 0.5) + 
+  labs(x = "Number of Characters (not including spaces)",
+       title = "What is responsible for the large jump in characters at 132?")
+```
+### What about proportional stacked bars?
+If the number of characters is non-predictive, we should se perfect 50/50 split among all tweet lengths
+```{r}
+train %>%
+  mutate(char_count = nchar(text)) %>%
+  ggplot(aes(x = char_count)) + 
+  geom_histogram(aes(fill = factor(target)), position = "fill")
+
+```
+**It looks like longer tweets are more likely to be an actual disaster tweet. it looks like length of tweet will be helpful for a future model ** 
+
+
+### Now I'll look at number of WORDS instead of characters 
+```{r}
+library(ngram)
+train %>%
+  mutate(word_count = sapply(strsplit(text, " "), length)) %>%
+  filter(word_count <= 40) %>%
+  ggplot(aes(x = word_count)) + 
+  geom_histogram(aes(fill = factor(target)), position = "fill")
+
+train %>%
+  mutate(word_count = sapply(strsplit(text, " "), length)) %>%
+  filter(word_count <= 40) %>%
+  ggplot(aes(x = word_count)) + 
+  geom_histogram(stat = "count", aes(fill = factor(target)))
+
+ 
+
+```
+
+Doesn't look like number of words has anything to do with it. Maybe a combination of words AND character count?
+
+```{r}
+train %>%
+  mutate(word_count = sapply(strsplit(text, " "), length),
+         char_count = nchar(text)) %>%
+  filter(word_count < 40) %>%
+  ggplot(aes(x = word_count, y = char_count, color = factor(target))) + 
+  geom_jitter(alpha = 0.6)
+```
+It looks like there might be an interesting relationship, maybe both variables should be in the model. 
+
+### Number of hashtags 
+```{r}
+train %>%
+  mutate(hashtag_count = str_count(text, "#")) %>%
+  ggplot(aes(x = hashtag_count, fill = factor(target))) + 
+  geom_histogram(binwidth = 1)
+
+train %>%
+  mutate(hashtag_count = str_count(text, "#")) %>%
+  ggplot(aes(x = hashtag_count, fill = factor(target))) + 
+  geom_histogram(binwidth = 1, position = "fill")
+```
+honestly not a ton of information here.
+
+### Number of numbers 
+```{r}
+train %>%
+  mutate(number_count = str_count(text, "[0-9]")) %>%
+  ggplot(aes(x = number_count, fill = factor(target))) + 
+  geom_histogram()
+
+train %>%
+  mutate(number_count = str_count(text, "[0-9]")) %>%
+  ggplot(aes(x = number_count, fill = factor(target))) + 
+  geom_histogram(position = "fill", binwidth = 1)
+```
+
+### Number of Capital letters 
+```{r}
+train %>%
+  mutate(capital_count = str_count(text, "[A-Z]")) %>%
+  ggplot(aes(x = capital_count, fill = factor(target))) + 
+  geom_histogram() 
+
+train %>%
+  mutate(capital_count = str_count(text, "[A-Z]")) %>%
+  ggplot(aes(x = capital_count, fill = factor(target))) + 
+  geom_histogram(position = "fill", binwidth = 3) 
+```
+it looks like there MIGHT be some interesting information here, not a ton though. 
+
+
+### Does the tweet contain a link? 
+```{r}
+train %>%
+  mutate(contains_link = case_when(str_count(text, "http") >= 1 ~ 1,
+                                   TRUE                         ~ 0)) %>%
+  group_by(contains_link) %>%
+  count(target)
+
+
+```
+links are SUPER important! this will be a vital part of our model I presume. 
+
+
+### Contains the workd "BREAKING"
+```{r}
+train %>%
+  mutate(breaking = str_count(text, "BREAKING")) %>%
+  group_by(breaking) %>%
+  count(target)
+
+```
+
+## Putting all these things into one dataset 
+```{r}
+
+train <- train %>%
+  mutate(breaking = str_count(text, "BREAKING"),
+         contains_link = case_when(str_count(text, "http") >= 1 ~ 1,
+                                   TRUE                         ~ 0),
+         capital_count = str_count(text, "[A-Z]"),
+         number_count = str_count(text, "[0-9]"),
+         hashtag_count = str_count(text, "#"),
+         word_count = sapply(strsplit(text, " "), length),
+         char_count = nchar(text))
+  
+# Create dummy variables and normalize columns.
+library(tidymodels)
+data_split <- initial_split(train %>%
+                              select(-keyword), prop = 0.7)
+
+data_split %>%  
+    training()
+
+data_split %>%
+    testing()
+
+#### Recipe creates a "recipe" for preprocessing ####
+data_recipe <- training(data_split) %>%                
+    recipe(target ~ breaking + contains_link + capital_count + number_count + hashtag_count) %>% 
+    step_corr(all_predictors(), -breaking, -contains_link) %>%                
+    step_center(all_predictors(), -breaking, -contains_link) %>% 
+    step_scale(all_predictors(), -breaking, -contains_link) %>%   
+    prep()
+  
+data_testing <- data_recipe %>%
+    bake(testing(data_split))
+
+data_training <- juice(data_recipe)
+```
+
+## Training the first model: Random Forest
+```{r}
+library(ranger)
+library(parsnip)
+library(yardstick)
+tweets_ranger <- rand_forest(trees = 50, mode = "classification") %>%   
+    set_engine("ranger") %>%                               
+    fit(factor(target) ~ ., data = data_training) 
+
+tweets_ranger
+
+results <-
+  tibble(
+    actual = data_testing$target,
+    predicted = predict(tweets_ranger, data_testing)
+  )
+
+table(actual = results$actual, predicted = results$predicted$.pred_class)
+# 881 + 584 = 1472 correctly predicted 
+# 403 + 408 = 811  incorrectly predicted 
+# Accuracy = 0.64  64.5%
+
+
+```
+
+
+
